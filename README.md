@@ -7,7 +7,7 @@ A simple tool to automaticaly create video sequences with simple edits<br>
   <img src="logo.png?raw=True" width="250"/>
 </div>
 
-## Instalation instruction using pip (Lixux)
+## Instalation instruction using pip
 ```bash  
 python3 -m pip install git+https://github.com/LiborKudela/clipsticher.git
 ```  
@@ -48,7 +48,7 @@ the_most_top_level = Scene_sequence([deepest_level, middle_level, almost_top_lev
 the_most_top_level.render("getting_deeper.avi")
 ```
 
-**Quick guide to all available scenes with args and kwargs:**
+**All available scenes with their args and kwargs:**
 ```python
 Image(filepath, duration=5)
 HtmlPage(url_or_filepath_or_htmlstring, duration=5)

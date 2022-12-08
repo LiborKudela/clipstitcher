@@ -2,7 +2,7 @@
 <b style="font-size:320%;">ClipStitcher</b>
 <p style="font-size:120%;">
 A simple tool to automaticaly create video sequences with simple edits<br>
-¯\_(ツ)_/¯
+( does not process audio yet ¯\_(ツ)_/¯ )
 </p>
   <img src="logo.png?raw=True" width="250"/>
 </div>
@@ -23,14 +23,14 @@ from clipstitcher import *
 ```python
 my_scene_1 = Image("path_to_my_img.jpg", duration=5)
 my_scene_2 = Video("path_to_my_video.mp4")
-scene_seq_1 = Scene_sequence([my_scene_1, my_scene_2])
+scene_seq = Scene_sequence([my_scene_1, my_scene_2])
 ```
 
 **How to play or render any scene:**
 ```python
 my_scene_1.play()
 my_scene_2.render()
-scene_seq.render()
+scene_seq.render(threads=2) # renders in parallel (default threads=1)
 ```
 
 **Or more specific instructions:**

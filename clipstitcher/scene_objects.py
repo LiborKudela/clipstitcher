@@ -13,6 +13,10 @@ import random
 import numpy as np
 from tqdm import tqdm
 import importlib
+import hashlib
+import json
+import threading
+import subprocess as sp
 
 default_fill_color = [255, 255, 255]
 default_background_color = [255, 255, 255]
@@ -53,6 +57,22 @@ def find_screen(overlay, screen_color = [0, 255, 0]):
     _, _, _, max_loc = cv2.minMaxLoc(mask_flip)
     bottom_right = (mask.shape[1] - max_loc[0], mask.shape[0] - max_loc[1])
     return top_left, bottom_right
+
+def ffmpeg_concatenate(files, out="merge.mp4"):
+   
+    # write content to ffmpeg input file
+    i = "concat_files.txt"
+    with open("concat_files.txt", "w") as txtf:
+        for f in files:
+            txtf.write("file {} \n".format(f))
+    
+    # run ffmpeg
+    cmd = f"ffmpeg -y -loglevel error -f concat -safe 0 -i {i} -vcodec copy {out}"
+    sp.Popen(cmd, shell=True).wait()
+    
+    # remove input file
+    os.remove(i)
+
        
 class Scene_object:
     def __init__(self, screen=(1920, 1080), fill_color=[255, 255, 255]):
@@ -60,42 +80,80 @@ class Scene_object:
         self.size = screen
         self.fill_color = fill_color
         self.static = False
+        self.threadLock = threading.Lock()
+        self.temp_output = "chunk_{}.mp4"
 
     def is_static(self):
         return self.static
-
-    def get_frames(self, start=0, stop=None):
-        if stop is None:
-            stop = self.total_frames()-1
-        for i in range(start, stop):
-            yield self.get_frame(i)
 
     def total_frames(self):
         "Returns total number of frames in the scene"
         pass
 
-    def render(self, start=0, stop=None, output=None):
+    def render_serial(self, start=0, stop=None, output=None):
         "This method renders a scene into a video file given in path output"
         if output is None:
             output = self.output
         if stop is None:
-            stop = self.total_frames()-1
-        codec = cv2.VideoWriter_fourcc('P', 'I', 'M', '1')
+            stop = self.total_frames() - 1
+        codec = cv2.VideoWriter_fourcc('m', 'p', '4', 'v')
         fps = 24
-        video_writter = cv2.VideoWriter(output, codec, fps, self.size)
+        video_writter = cv2.VideoWriter(output, codec, fps, self.size, True)
         total_frames = stop - start
-        for frame in tqdm(self.get_frames(start, stop), total=total_frames):
+        for frame in self.get_frames(start, stop):
             frame = resize_to_fit_screen(frame, self.size)
             video_writter.write(frame)
+            with self.threadLock:
+                self.frames_processed += 1
         video_writter.release()
 
-    def save_frame_to_image(self, i=0, output=None):
+    def render(self, start=0, stop=None, threads=1, output=None):
+        "This method renders the scene into a video file"
+        
+        # resolve output video filename
         if output is None:
-            output = f"{self.output}_f{i}.jpg"
-        cv2.imwrite(output, self.get_frame(i))
+            output = self.output
+        
+        # resolve chunks and their size
+        if stop is None:
+            stop = self.total_frames() - 1
+        total_frames = stop - start
+        chunk_size = int((stop-start)/threads)
 
+        # generate and start render threads
+        self.frames_processed = 0
+        render_threads = []
+        chunk_files = [self.temp_output.format(i) for i in range(threads)]
+        for i in range(threads):
+            kwargs = {
+                "start": start + chunk_size*i, 
+                "stop": min(start + chunk_size*(i+1), total_frames), 
+                "output": chunk_files[i]}
+            t = threading.Thread(target=self.render_serial, kwargs=kwargs)
+            render_threads.append(t)
+            t.start()
+        
+        # updating progress bar and waiting for video chunks
+        with tqdm(total=self.total_frames()) as pbar:
+            processing = True
+            while processing:
+                time.sleep(0.2)
+                pbar.update(self.frames_processed - pbar.n)
+                processing = any([t.is_alive() for t in render_threads])
+        pbar.update(self.frames_processed - pbar.n)
+        
+        # concatenate chunks into one video 
+        ffmpeg_concatenate(chunk_files, out=output)
+        
+        # remove video chunk files
+        for cf in chunk_files:
+            os.remove(cf)
+        
     def play(self, start=0, stop=None):
         "This method plays the scene in opencv window (as fast as possible)"
+        if stop is None:
+            stop = self.total_frames() - 1
+            
         cv2.namedWindow("main window")
         cv2.resizeWindow("main window", width=self.size[0], height=self.size[1])
         for frame in tqdm(self.get_frames(start, stop), total=stop - start):
@@ -108,9 +166,15 @@ class Scene_object:
                 break
         cv2.destroyAllWindows()
 
+    def get_hash_id(self):
+        m = hashlib.sha256()
+        d_str = json.dumps(self.__dict__)
+        m.update(d_str.encode('UTF-8'))
+        return m.hexdigest()
+
 class Image(Scene_object):
     def __init__(self, filepath, duration=5, background_color=default_background_color):
-        self.output = "image.avi"
+        self.output = "image.mp4"
         self.duration = duration
         self.img = cv2.imread(filepath, cv2.IMREAD_UNCHANGED)
         trans_mask = self.img[:,:,3] == 0
@@ -119,11 +183,11 @@ class Image(Scene_object):
         super().__init__()
         self.static = True
 
-    def get_frame(self, i):
-        if i < self.total_frames():
-            return self.img
-        else:
-            return None
+    def get_frames(self, start=0, stop=None):
+        if stop is None:
+            stop = self.total_frames()-1
+        for i in range(start, stop):
+            yield self.img
 
     def total_frames(self):
         return self.duration*24
@@ -138,7 +202,7 @@ class Html_page(Scene_object):
             self.img = self.file_to_image(html_file)
         elif html_str is not None:
             self.img = self.html_str_to_image(html_str)
-        self.output = "html_page.avi"
+        self.output = "html_page.mp4"
         super().__init__()
         self.static = True
 
@@ -164,12 +228,12 @@ class Html_page(Scene_object):
         with open(temp_file, "w") as f:
             f.write(html_str)
         return self.file_to_image(temp_file)
-
-    def get_frame(self, i):
-        if i < self.total_frames():
-            return self.img
-        else:
-            return None
+    
+    def get_frames(self, start=0, stop=None):
+        if stop is None:
+            stop = self.total_frames() - 1
+        for i in range(start, stop):
+            yield self.img
 
     def total_frames(self):
         return self.duration*24
@@ -181,10 +245,9 @@ class Tweet(Html_page):
         res = requests.get(f"https://publish.twitter.com/oembed?url={tweet_url}")
         html_str = self.embed_to_html(res.json()["html"])
         super().__init__(html_str=html_str, duration=duration)
-        self.output = "tweet.avi"
+        self.output = "tweet.mp4"
 
     def embed_to_html(self, embed_code):
-        print(html_style_path)
         code = f"""
                 <!DOCTYPE html>
                 <html>
@@ -210,21 +273,24 @@ class Video(Scene_object):
 
     def __init__(self, file):
         self.file = file
-        self.output = "video.avi"
-        self.cap = cv2.VideoCapture(self.file)
-        self.n_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        self.output = "video.mp4"
+        cap = cv2.VideoCapture(self.file)
+        self.n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        cap.release()
         super().__init__()
 
-    def get_frame(self, i):
-        if i < self.total_frames():
-            if i != self.cap.get(1):
-                self.cap.set(1, i)
-            ret, frame = self.cap.read()
-            return frame
-        else:
-            return None
+    def get_frames(self, start=0, stop=None):
+        cap = cv2.VideoCapture(self.file)
+        cap.set(1, start)
+        if stop is None:
+            stop = self.total_frames() - 1
+        for i in range(start, stop):
+            ret, frame = cap.read()
+            yield frame
+        cap.release()
 
     def total_frames(self):
+
         return self.n_frames
 
 def load_videos_from_folder(folder):
@@ -237,26 +303,25 @@ def load_videos_from_folder(folder):
 class Overlay(Scene_object):
     def __init__(self, scene, overlay, screen_color = [0, 255, 0]):
         self.scene = scene
-        self.output = "Overlay.avi"
+        self.output = "overlay.mp4"
         self.overlay = cv2.imread(overlay)
         self.top_left, self.bottom_right = find_screen(self.overlay, screen_color)
-        self.embed_scene_frame(self.scene.get_frame(0))
+        self.embed_scene_frame(list(self.scene.get_frames(0,1))[0]) #TODO: make method for this
         super().__init__()
 
     def embed_scene_frame(self, frame):
         screen = (self.bottom_right[0] - self.top_left[0], self.bottom_right[1] - self.top_left[1])
         frame = resize_to_fit_screen(frame, screen)
-        self.overlay[self.top_left[1]:self.bottom_right[1],self.top_left[0]:self.bottom_right[0]] = frame
-        return self.overlay
+        overlay = self.overlay.copy()
+        overlay[self.top_left[1]:self.bottom_right[1],self.top_left[0]:self.bottom_right[0]] = frame
+        return overlay
 
-    def get_frame(self, i):
-        if i < self.total_frames():
-            if self.scene.is_static():
-                return self.overlay
+    def get_frames(self, start=0, stop=None):
+        for frame in self.scene.get_frames(start, stop):
+            if self.is_static():
+                yield self.overlay
             else:
-                return self.embed_scene_frame(self.scene.get_frame(i))
-        else:
-            return None
+                yield self.embed_scene_frame(frame)
 
     def total_frames(self):
         return self.scene.total_frames()
@@ -265,23 +330,29 @@ class Scene_sequence(Scene_object):
     
     def __init__(self, scene_list: List[Scene_object]):
         self.scene_list = scene_list
-        self._frame_count_list = [scene.total_frames() for scene in self.scene_list]
-        self._total_frames = np.sum(self._frame_count_list)
-        self._frame_max_idx_list = np.cumsum(self._frame_count_list) - 1
-        self.output = "sequence.avi"
+        self.frames_in_scene = [scene.total_frames() for scene in self.scene_list]
+        self._total_frames = np.sum(self.frames_in_scene)
+        self.scene_start_idx = np.cumsum([0] + self.frames_in_scene[:-1])
+        self.scene_stop_idx = np.cumsum(self.frames_in_scene) - 1
+        self.output = "sequence.mp4"
         super().__init__()
 
-    def get_frame(self, i):
-        scene_idx = np.argmin(self._frame_max_idx_list <= i)
-        new_i = i
-        new_i -= self._frame_max_idx_list[scene_idx-1] if scene_idx > 0 else 0
-        return self.scene_list[scene_idx].get_frame(new_i)
+    def get_frames(self, start=500, stop=None):
+        if stop is None:
+            stop = self.total_frames() - 1
+        first_scene_idx = np.argmax(self.scene_stop_idx >= start)
+        last_scene_idx = np.argmax(self.scene_stop_idx >= stop)
+        for scene_idx in range(first_scene_idx, last_scene_idx+1):
+            scene_start = min(self.frames_in_scene[scene_idx]-1, max(0, start - self.scene_start_idx[scene_idx]))
+            scene_stop = min(self.frames_in_scene[scene_idx], max(0, stop - self.scene_start_idx[scene_idx]))
+            for frame in self.scene_list[scene_idx].get_frames(scene_start, scene_stop):
+                yield frame
 
     def render_scene(self, i):
         self.scene_list[i].render(output=f"scene_{i}_{self.scene_list[i].output}")
 
     def total_frames(self):
-        return np.sum(self._frame_count_list)
+        return self._total_frames
 
     def shufle(self):
         random.shuffle(self.scene_list)

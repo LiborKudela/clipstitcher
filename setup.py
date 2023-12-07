@@ -17,7 +17,7 @@ setup(
     long_description_content_type = 'text/markdown',
     url='https://github.com/LiborKudela/clipsticher',
     install_requires=[
-        'numpy>=1.20.2'
+        'numpy>=1.20.2',
         'opencv-python>=4.6.0.66',
         'requests>=2.28.1',
         'selenium>=4.6.0',

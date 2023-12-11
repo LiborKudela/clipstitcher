@@ -5,8 +5,8 @@ import os
 import requests
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.wait import WebDriverWait
+# from selenium.webdriver.common.by import By
+# from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import time
 import random
@@ -18,13 +18,19 @@ import json
 import threading
 import subprocess as sp
 
-default_fill_color = [255, 255, 255]
-default_background_color = [255, 255, 255]
-default_core_thread_count = 4
+class DefaultOptions:
+    def __init__(self):
+        self.default_fill_color = [255, 255, 255]
+        self.default_background_color = [255, 255, 255]
+        self.default_core_thread_count = 4
+        self.default_resolution = (1920, 1080)
+
+default_options = DefaultOptions()
+
 with importlib.resources.path("clipstitcher", "styles.css") as p:
     html_style_path = p
 
-def resize_to_fit_screen(frame, screen, fill_color=default_fill_color):
+def resize_to_fit_screen(frame, screen, fill_color=default_options.default_fill_color):
     frame_a = frame.shape[1]/frame.shape[0]
     screen_a = screen[0]/screen[1]
     #TODO: make the bellow chunk nicer
@@ -75,13 +81,16 @@ def ffmpeg_concatenate(files, out="merge.mp4"):
 
        
 class Scene_object:
-    def __init__(self, screen=(1920, 1080), fill_color=[255, 255, 255]):
+    def __init__(self, screen=default_options.default_resolution, fill_color=[255, 255, 255]):
         self.window = "main window"
         self.size = screen
         self.fill_color = fill_color
         self.static = False
         self.threadLock = threading.Lock()
         self.temp_output = "chunk_{}.mp4"
+
+    def get_children(self):
+        return None
 
     def is_static(self):
         return self.static
@@ -173,7 +182,7 @@ class Scene_object:
         return m.hexdigest()
 
 class Image(Scene_object):
-    def __init__(self, filepath, duration=5, background_color=default_background_color):
+    def __init__(self, filepath, duration=5, background_color=default_options.default_background_color):
         self.output = "image.mp4"
         self.duration = duration
         self.img = cv2.imread(filepath, cv2.IMREAD_UNCHANGED)
@@ -182,6 +191,9 @@ class Image(Scene_object):
         self.img = cv2.cvtColor(self.img, cv2.COLOR_BGRA2BGR)
         super().__init__()
         self.static = True
+
+    def get_children(self):
+        return self.img
 
     def get_frames(self, start=0, stop=None):
         if stop is None:
@@ -206,11 +218,15 @@ class Html_page(Scene_object):
         super().__init__()
         self.static = True
 
+    def get_children(self):
+        return self.img
+
     def url_to_image(self, url):
         options = Options()
         options.add_argument("--headless")
-        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--window-size={},{}".format(*default_options.default_resolution))
         options.add_argument("--hide-scrollbars")
+        options.add_argument(f"--force-device-scale-factor={2.0}")
         driver = webdriver.Chrome(options=options)
         driver.get(url)
         time.sleep(2)
@@ -224,10 +240,12 @@ class Html_page(Scene_object):
         return self.url_to_image(file)
 
     def html_str_to_image(self, html_str):
+        url = "data:text/html;charset=utf-8," + html_str
         temp_file = "temp_web_page.html"
         with open(temp_file, "w") as f:
-            f.write(html_str)
+           f.write(html_str)
         return self.file_to_image(temp_file)
+        #return self.url_to_image(url)
     
     def get_frames(self, start=0, stop=None):
         if stop is None:
@@ -279,6 +297,9 @@ class Video(Scene_object):
         cap.release()
         super().__init__()
 
+    def get_children(self):
+        return self.file
+
     def get_frames(self, start=0, stop=None):
         cap = cv2.VideoCapture(self.file)
         cap.set(1, start)
@@ -290,7 +311,6 @@ class Video(Scene_object):
         cap.release()
 
     def total_frames(self):
-
         return self.n_frames
 
 def load_videos_from_folder(folder):
@@ -308,6 +328,9 @@ class Overlay(Scene_object):
         self.top_left, self.bottom_right = find_screen(self.overlay, screen_color)
         self.embed_scene_frame(list(self.scene.get_frames(0,1))[0]) #TODO: make method for this
         super().__init__()
+
+    def get_children(self):
+        return self.scene
 
     def embed_scene_frame(self, frame):
         screen = (self.bottom_right[0] - self.top_left[0], self.bottom_right[1] - self.top_left[1])
@@ -336,6 +359,9 @@ class Scene_sequence(Scene_object):
         self.scene_stop_idx = np.cumsum(self.frames_in_scene) - 1
         self.output = "sequence.mp4"
         super().__init__()
+
+    def get_children(self):
+        return self.scene_list
 
     def get_frames(self, start=500, stop=None):
         if stop is None:

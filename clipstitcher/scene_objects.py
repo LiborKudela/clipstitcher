@@ -186,8 +186,9 @@ class Image(Scene_object):
         self.output = "image.mp4"
         self.duration = duration
         self.img = cv2.imread(filepath, cv2.IMREAD_UNCHANGED)
-        trans_mask = self.img[:,:,3] == 0
-        self.img[trans_mask] = background_color + [255]
+        if self.img.shape[2] == 4: # has transparency channel?
+       	    trans_mask = self.img[:,:,3] == 0
+            self.img[trans_mask] = background_color + [255]
         self.img = cv2.cvtColor(self.img, cv2.COLOR_BGRA2BGR)
         super().__init__()
         self.static = True

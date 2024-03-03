@@ -1,5 +1,5 @@
 from clipstitcher import *
-default_options.default_resolution = (3840, 2160)
+default_options.default_resolution = (1920, 1080)
 
 sequence = Scene_sequence([
     Overlay(Image("images/welcome.png"), "images/overlay.png"),

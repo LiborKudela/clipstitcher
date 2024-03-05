@@ -187,7 +187,7 @@ class Image(Scene_object):
         self.duration = duration
         self.img = cv2.imread(filepath, cv2.IMREAD_UNCHANGED)
         if self.img.shape[2] == 4: # has transparency channel?
-       	    trans_mask = self.img[:,:,3] == 0
+            trans_mask = self.img[:,:,3] == 0
             self.img[trans_mask] = background_color + [255]
         self.img = cv2.cvtColor(self.img, cv2.COLOR_BGRA2BGR)
         super().__init__()
@@ -198,7 +198,7 @@ class Image(Scene_object):
 
     def get_frames(self, start=0, stop=None):
         if stop is None:
-            stop = self.total_frames()-1
+            stop = self.total_frames() - 1
         for i in range(start, stop):
             yield self.img
 

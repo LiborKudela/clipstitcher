@@ -22,6 +22,7 @@ setup(
         'requests>=2.28.1',
         'selenium>=4.6.0',
         'tqdm>=4.64.1',
+        'python-vlc>=3.0.20123',
         ],
     packages = find_packages(),
     keywords = 'video, editing, sequence, rendering',

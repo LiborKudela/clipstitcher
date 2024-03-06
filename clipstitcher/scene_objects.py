@@ -12,7 +12,7 @@ import time
 import random
 import numpy as np
 from tqdm import tqdm
-import importlib
+import importlib.resources
 import hashlib
 import json
 import threading

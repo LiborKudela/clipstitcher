@@ -2,6 +2,7 @@ import requests
 import json
 import time
 import subprocess
+from tqdm import tqdm
 
 class ClientPlayer():
     def __init__(self, folder_id, api_key, media_path, refresh_time=60, ctrl_name='controller.txt'):
@@ -47,9 +48,14 @@ class ClientPlayer():
                 if data_changed:
                     # download the selected video and save to disk
                     response = requests.get(video_download_url, stream=True)
+                    total_size = int(response.headers.get('content-length', 0))
+                    
                     with open(self.media_path, mode="wb") as f:
+                        progress_bar = tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=1024, desc=f"Downloading {video_file_name}", miniters=1)
                         for chunk in response.iter_content(chunk_size=10 * 1024):
                             f.write(chunk)
+                            progress_bar.update(len(chunk))
+                        progress_bar.close()
                     
                     # remeber that what files are you playing
                     self.old_video_md5Checksum = files[file_map[video_file_name]]['md5Checksum']
@@ -69,6 +75,7 @@ class ClientPlayer():
 
                 # wait 60s till next sync
                 time.sleep(self.refresh_time)
-            except:
+            except Exception as e:
                 print("Check internet connection please, something is wrong")
+                print(e)
                 time.sleep(5)

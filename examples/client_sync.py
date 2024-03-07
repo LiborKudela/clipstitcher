@@ -1,5 +1,4 @@
 from clipstitcher import *
-import requests
 
 folder_id = 'None'
 api_key = 'None'

@@ -198,6 +198,12 @@ class Scene_object:
 
         self.uploader.upload_file('controller.txt', folder_id)
 
+    def upload_linux_rsync(self, user=None, ip=None, folder=None):
+        # not tested
+        assert(user is not None and ip is not None and folder is not None)
+        os.system(f'rsync  -v --progress {self.output} {user}@{ip}:{folder}/{self.output}')
+
+
 class Image(Scene_object):
     def __init__(self, filepath, duration=5, background_color=default_options.default_background_color):
         self.output = "image.mp4"

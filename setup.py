@@ -23,6 +23,8 @@ setup(
         'selenium>=4.6.0',
         'tqdm>=4.64.1',
         'python-vlc>=3.0.20123',
+        'tqdm>=4.66.1',
+        'PyDrive2>=1.19.0',
         ],
     packages = find_packages(),
     keywords = 'video, editing, sequence, rendering',

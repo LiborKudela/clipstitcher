@@ -25,6 +25,7 @@ class DefaultOptions:
         self.default_background_color = [255, 255, 255]
         self.default_core_thread_count = 4
         self.default_resolution = (1920, 1080)
+        self.default_ffmpeg_win = '.\\ffmpeg_tool\\bin\\ffmpeg.exe' 
 
 default_options = DefaultOptions()
 
@@ -74,7 +75,11 @@ def ffmpeg_concatenate(files, out="merge.mp4"):
             txtf.write("file {} \n".format(f))
     
     # run ffmpeg
-    cmd = f"ffmpeg -y -loglevel error -f concat -safe 0 -i {i} -vcodec copy {out}"
+    if os.name =='posix':
+        ffmpeg_executable = 'ffmpeg'
+    elif os.name == 'nt':
+        ffmpeg_executable = default_options.default_ffmpeg_win
+    cmd = f"{ffmpeg_executable} -y -loglevel error -f concat -safe 0 -i {i} -vcodec copy {out}"
     sp.Popen(cmd, shell=True).wait()
     
     # remove input file
@@ -266,7 +271,7 @@ class Html_page(Scene_object):
     def html_str_to_image(self, html_str):
         url = "data:text/html;charset=utf-8," + html_str
         temp_file = "temp_web_page.html"
-        with open(temp_file, "w") as f:
+        with open(temp_file, "w", encoding='utf-8') as f:
            f.write(html_str)
         return self.file_to_image(temp_file)
         #return self.url_to_image(url)

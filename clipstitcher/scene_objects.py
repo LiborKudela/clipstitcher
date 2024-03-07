@@ -17,6 +17,7 @@ import hashlib
 import json
 import threading
 import subprocess as sp
+from .host_sync import Uploader
 
 class DefaultOptions:
     def __init__(self):
@@ -180,6 +181,22 @@ class Scene_object:
         d_str = json.dumps(self.__dict__)
         m.update(d_str.encode('UTF-8'))
         return m.hexdigest()
+    
+    def upload(self, folder_id):
+        if not hasattr(self, 'uploader'):
+            self.uploader = Uploader()
+
+        self.uploader.upload_file(self.output, folder_id)
+        
+    def set(self, folder_id):
+        if not hasattr(self, 'uploader'):
+            self.uploader = Uploader()
+
+        with open('controller.txt', 'w') as cf:
+            file_to_play = os.path.split(self.output)[1]
+            cf.write(file_to_play)
+
+        self.uploader.upload_file('controller.txt', folder_id)
 
 class Image(Scene_object):
     def __init__(self, filepath, duration=5, background_color=default_options.default_background_color):

@@ -9,3 +9,9 @@ sequence = Scene_sequence([
 ])
 
 sequence.render(threads=4)
+
+
+# upload to google
+folder_id = 'None'
+sequence.upload(folder_id)
+sequence.set(folder_id)

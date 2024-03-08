@@ -3,7 +3,8 @@ from pydrive2.drive import GoogleDrive
 import os
 
 class Uploader():
-    def __init__(self):
+    def __init__(self, secrets_path='client_secrets.json'):
+        GoogleAuth.DEFAULT_SETTINGS['client_config_file']=secrets_path
         self.gauth = GoogleAuth()
         self.gauth.LocalWebserverAuth()  # Follow the authentication instructions
         self.drive = GoogleDrive(self.gauth)
@@ -20,10 +21,13 @@ class Uploader():
             updated_file = self.drive.CreateFile({'id': existing_file_id})
             updated_file.SetContentFile(file_path)
             updated_file.Upload()
-            print(f'Replacing file {file_name}. File ID: {existing_file_id}')
+            file_id = existing_file_id
+            print(f'Replacing file {file_name}. File ID: {file_id}')
         else:
             file_metadata = {'name': file_name, 'parents': [{'id': parent_folder_id}]}
             new_file = self.drive.CreateFile(file_metadata)
             new_file.SetContentFile(file_path)
             new_file.Upload()
-            print(f'Creating new {file_name}. File ID: {new_file.get("id")}')
+            file_id = new_file.get("id")
+            print(f'Creating new {file_name}. File ID: {file_id}')
+        return file_id

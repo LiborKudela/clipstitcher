@@ -5,15 +5,11 @@ import subprocess
 from tqdm import tqdm
 
 class ClientPlayer():
-    def __init__(self, folder_id, api_key, media_path, refresh_time=60, ctrl_name='controller.txt'):
-        self.folder_id = folder_id
-        self.api_key = api_key
+    def __init__(self, controller_id, media_path, refresh_time=60):
+        self.ctrl_id = controller_id
+        self.old_ctrl_data = [None, None, None]
         self.media_path = media_path
-        self.old_ctrl_md5Checksum = None
-        self.old_video_md5Checksum = None
         self.refresh_time = refresh_time
-        self.ctrl_name = ctrl_name
-        self.files_query = f'https://www.googleapis.com/drive/v3/files?q=%27{self.folder_id}%27+in+parents&fields=files(id, md5Checksum,+originalFilename,%20+name)&key={self.api_key}'
 
     def play_content(self):
 
@@ -22,44 +18,30 @@ class ClientPlayer():
             try:
                 data_changed = False
                 # read metadata from google drive
-                response = json.loads(requests.get(self.files_query).content)
-                files = response['files']
+                ctrl_download_url = f"https://drive.google.com/uc?id={self.ctrl_id}&export=download"
+                ctrl_content = requests.get(ctrl_download_url).content.decode()
+                ctrl_data = dict(zip(['file_name', 'file_id', 'file_hash'], ctrl_content.split(';')))
 
-                # parse data about files
-                file_map = {}
-                for i, file in enumerate(files):
-                    file_map[file['name']] = i
+                # if controller changed download and play new content
+                if ctrl_data != self.old_ctrl_data:
 
-                # if controler changed download and play new content
-                if files[file_map[self.ctrl_name]]['md5Checksum'] != self.old_ctrl_md5Checksum:
-
-                    # read content of controller.txt and obtain selected video file id
-                    ctrl_id = files[file_map[self.ctrl_name]]['id']
-                    ctrl_download_url = f"https://drive.google.com/uc?id={ctrl_id}&export=download"
-                    video_file_name = requests.get(ctrl_download_url).content.decode()
-                    video_file_id = files[file_map[video_file_name]]['id']
+                    # get url of the requested video
+                    video_file_id = ctrl_data['file_id']
+                    video_file_name = ctrl_data['file_name']
                     video_download_url = f"https://drive.google.com/uc?id={video_file_id}&export=download"
-                    data_changed = True
-                
-                # if currently played video changed download it again
-                elif files[file_map[video_file_name]]['md5Checksum'] != self.old_video_md5Checksum:
-                    data_changed = True
 
-                if data_changed:
-                    # download the selected video and save to disk
+                    # download the video
                     response = requests.get(video_download_url, stream=True)
                     total_size = int(response.headers.get('content-length', 0))
-                    
                     with open(self.media_path, mode="wb") as f:
                         progress_bar = tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=1024, desc=f"Downloading {video_file_name}", miniters=1)
-                        for chunk in response.iter_content(chunk_size=10 * 1024):
+                        for chunk in response.iter_content(chunk_size=10*1024):
                             f.write(chunk)
                             progress_bar.update(len(chunk))
                         progress_bar.close()
                     
-                    # remeber that what files are you playing
-                    self.old_video_md5Checksum = files[file_map[video_file_name]]['md5Checksum']
-                    self.old_ctrl_md5Checksum = files[file_map[self.ctrl_name]]['md5Checksum']
+                    # remember what files are you playing
+                    self.old_ctrl_data = ctrl_data.copy()
                     
                     # start new video loop
                     print(f"Playing: {video_file_name}")
@@ -76,6 +58,6 @@ class ClientPlayer():
                 # wait 60s till next sync
                 time.sleep(self.refresh_time)
             except Exception as e:
-                print("Check internet connection please, something is wrong")
+                print("Check internet connection please, cannot access controller")
                 print(e)
                 time.sleep(5)

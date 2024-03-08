@@ -2,7 +2,7 @@
 <b style="font-size:320%;">ClipStitcher</b>
 <p style="font-size:120%;">
 A simple tool to automaticaly create video sequences with simple edits<br>
-( does not process audio yet ¯\_(ツ)_/¯ )
+( does not process audio yet )
 </p>
   <img src="logo.png?raw=True" width="250"/>
 </div>

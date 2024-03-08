@@ -5,8 +5,6 @@ import os
 import requests
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-# from selenium.webdriver.common.by import By
-# from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import time
 import random
@@ -21,18 +19,19 @@ from .host_sync import Uploader
 
 class DefaultOptions:
     def __init__(self):
-        self.default_fill_color = [255, 255, 255]
-        self.default_background_color = [255, 255, 255]
-        self.default_core_thread_count = 4
-        self.default_resolution = (1920, 1080)
-        self.default_ffmpeg_win = '.\\ffmpeg_tool\\bin\\ffmpeg.exe' 
+        self.fill_color = [255, 255, 255]
+        self.background_color = [255, 255, 255]
+        self.core_thread_count = 4
+        self.resolution = (1920, 1080)
+        self.ffmpeg_win = '.\\ffmpeg_tool\\bin\\ffmpeg.exe'
+        self.client_secrets = 'client_secrets.json'
 
 default_options = DefaultOptions()
 
 with importlib.resources.path("clipstitcher", "styles.css") as p:
     html_style_path = p
 
-def resize_to_fit_screen(frame, screen, fill_color=default_options.default_fill_color):
+def resize_to_fit_screen(frame, screen, fill_color=default_options.fill_color):
     frame_a = frame.shape[1]/frame.shape[0]
     screen_a = screen[0]/screen[1]
     #TODO: make the bellow chunk nicer
@@ -78,7 +77,7 @@ def ffmpeg_concatenate(files, out="merge.mp4"):
     if os.name =='posix':
         ffmpeg_executable = 'ffmpeg'
     elif os.name == 'nt':
-        ffmpeg_executable = default_options.default_ffmpeg_win
+        ffmpeg_executable = default_options.ffmpeg_win
     cmd = f"{ffmpeg_executable} -y -loglevel error -f concat -safe 0 -i {i} -vcodec copy {out}"
     sp.Popen(cmd, shell=True).wait()
     
@@ -87,7 +86,7 @@ def ffmpeg_concatenate(files, out="merge.mp4"):
 
        
 class Scene_object:
-    def __init__(self, screen=default_options.default_resolution, fill_color=[255, 255, 255]):
+    def __init__(self, screen=default_options.resolution, fill_color=[255, 255, 255]):
         self.window = "main window"
         self.size = screen
         self.fill_color = fill_color
@@ -187,20 +186,42 @@ class Scene_object:
         m.update(d_str.encode('UTF-8'))
         return m.hexdigest()
     
-    def upload(self, folder_id):
-        if not hasattr(self, 'uploader'):
-            self.uploader = Uploader()
+    def get_file_hash(self):
+        """"This function returns the SHA-1 hash
+        of the file passed into it"""
 
-        self.uploader.upload_file(self.output, folder_id)
-        
-    def set(self, folder_id):
-        if not hasattr(self, 'uploader'):
-            self.uploader = Uploader()
+        # make a hash object
+        h = hashlib.sha1()
 
+        # open file for reading in binary mode
+        with open(self.output, 'rb') as file:
+
+            # loop till the end of the file
+            chunk = 0
+            while chunk != b'':
+                # read only 1024 bytes at a time
+                chunk = file.read(1024)
+                h.update(chunk)
+
+        # return the hex representation of digest
+        return h.hexdigest()
+    
+    def update_broadcast(self, folder_id):
+
+        # create instance of uploader
+        if not hasattr(self, 'uploader'):
+            self.uploader = Uploader(default_options.client_secrets)
+
+        # upload video and get metadata for controller
+        file_id = self.uploader.upload_file(self.output, folder_id)
+        file_name = os.path.split(self.output)[1]
+        file_hash = self.get_file_hash()
+       
+
+        # update controller
         with open('controller.txt', 'w') as cf:
-            file_to_play = os.path.split(self.output)[1]
-            cf.write(file_to_play)
-
+            ctrl = f'{file_name};{file_id};{file_hash}'
+            cf.write(ctrl)
         self.uploader.upload_file('controller.txt', folder_id)
 
     def upload_linux_rsync(self, user=None, ip=None, folder=None):
@@ -210,7 +231,7 @@ class Scene_object:
 
 
 class Image(Scene_object):
-    def __init__(self, filepath, duration=5, background_color=default_options.default_background_color):
+    def __init__(self, filepath, duration=5, background_color=default_options.background_color):
         self.output = "image.mp4"
         self.duration = duration
         self.img = cv2.imread(filepath, cv2.IMREAD_UNCHANGED)
@@ -253,7 +274,7 @@ class Html_page(Scene_object):
     def url_to_image(self, url):
         options = Options()
         options.add_argument("--headless")
-        options.add_argument("--window-size={},{}".format(*default_options.default_resolution))
+        options.add_argument("--window-size={},{}".format(*default_options.resolution))
         options.add_argument("--hide-scrollbars")
         options.add_argument(f"--force-device-scale-factor={2.0}")
         driver = webdriver.Chrome(options=options)

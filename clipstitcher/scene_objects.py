@@ -506,6 +506,7 @@ class LinearTransition(Scene_object):
             start_in = start
             stop_in = min(stop, transition_start)
             for frame in self.scene_in.get_frames(start_in, stop_in):
+                frame = resize_to_fit_screen(frame, self.size)
                 yield frame
         if stop > transition_start:
             start_in = max(start, transition_start)
@@ -525,6 +526,7 @@ class LinearTransition(Scene_object):
             start_out = max(total_transition_frames, start-self.scene_in.total_frames())
             stop_out = stop-self.scene_in.total_frames()
             for frame in self.scene_out.get_frames(start_out, stop_out):
+                frame = resize_to_fit_screen(frame, self.size)
                 yield frame
             
     def total_frames(self):

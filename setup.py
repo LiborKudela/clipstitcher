@@ -31,8 +31,8 @@ setup(
     python_requires='>3.8.0',
     classifiers=[
         'Natural Language :: English',
-        'Development Status :: 2 - Pre-Alpha'
+        'Development Status :: 2 - Pre-Alpha',
         'Programing Language :: Python :: 3.8',
-        'Operating System :: POSIX :: Linux'
+        'Operating System :: POSIX :: Linux',
     ]
 )

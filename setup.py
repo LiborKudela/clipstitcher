@@ -32,7 +32,7 @@ setup(
     classifiers=[
         'Natural Language :: English',
         'Development Status :: 2 - Pre-Alpha',
-        'Programing Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.8',
         'Operating System :: POSIX :: Linux',
     ]
 )

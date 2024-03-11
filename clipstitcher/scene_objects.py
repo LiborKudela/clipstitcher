@@ -25,8 +25,9 @@ class DefaultOptions:
         self.resolution = (1920, 1080)
         self.ffmpeg_win = '.\\ffmpeg_tool\\bin\\ffmpeg.exe'
         self.client_secrets = 'client_secrets.json'
+        self.fps = 24
 
-default_options = DefaultOptions()
+default_options = DefaultOptions()  
 
 with importlib.resources.path("clipstitcher", "styles.css") as p:
     html_style_path = p
@@ -38,20 +39,21 @@ def resize_to_fit_screen(frame, screen, fill_color=default_options.fill_color):
     if frame.shape[1] != screen[0] or frame.shape[0] != screen[1]:
         if frame_a > screen_a:
             w_a = screen[0]/frame.shape[1]
-            new_size = (int(frame.shape[1]*w_a), int(frame.shape[0]*w_a))
+            new_size = (screen[0], int(frame.shape[0]*w_a))
             frame = cv2.resize(frame, new_size, interpolation = cv2.INTER_AREA)
             border_1 = int((screen[1] - frame.shape[0])/2)
-            border_2 = screen[1] -frame.shape[0]- border_1
+            border_2 = screen[1] - frame.shape[0] - border_1
             frame = cv2.copyMakeBorder(frame, border_1, border_2, 0, 0, borderType=cv2.BORDER_CONSTANT, value=fill_color)
         elif frame_a < screen_a:
             h_a = screen[1]/frame.shape[0]
-            new_size = (int(frame.shape[1]*h_a), int(frame.shape[0]*h_a))
+            new_size = (int(frame.shape[1]*h_a), screen[1])
             frame = cv2.resize(frame, new_size, interpolation = cv2.INTER_AREA)
             border_1 = int((screen[0] - frame.shape[1])/2)
-            border_2 = screen[0] -frame.shape[1] - border_1
+            border_2 = screen[0] - frame.shape[1] - border_1
             frame = cv2.copyMakeBorder(frame, 0, 0, border_1, border_2, borderType=cv2.BORDER_CONSTANT, value=fill_color)
         else:
             frame = cv2.resize(frame, screen, interpolation = cv2.INTER_AREA)
+
     return frame
 
 def find_screen(overlay, screen_color = [0, 255, 0]):
@@ -111,9 +113,10 @@ class Scene_object:
         if stop is None:
             stop = self.total_frames() - 1
         codec = cv2.VideoWriter_fourcc('m', 'p', '4', 'v')
-        fps = 24
+        fps = default_options.fps
         video_writter = cv2.VideoWriter(output, codec, fps, self.size, True)
         total_frames = stop - start
+        self.frames_processed = 0
         for frame in self.get_frames(start, stop):
             frame = resize_to_fit_screen(frame, self.size)
             video_writter.write(frame)
@@ -252,7 +255,7 @@ class Image(Scene_object):
             yield self.img
 
     def total_frames(self):
-        return self.duration*24
+        return self.duration*default_options.fps
 
 class Html_page(Scene_object):
     def __init__(self, html_str=None, html_url=None, html_file=None, duration=5,
@@ -304,7 +307,7 @@ class Html_page(Scene_object):
             yield self.img
 
     def total_frames(self):
-        return self.duration*24
+        return self.duration*default_options.fps
 
 class Tweet(Html_page):
 
@@ -374,9 +377,10 @@ class Overlay(Scene_object):
     def __init__(self, scene, overlay, screen_color = [0, 255, 0]):
         self.scene = scene
         self.output = "overlay.mp4"
+        assert os.path.exists(overlay), f"File {overlay} does not exist."
         self.overlay = cv2.imread(overlay)
         self.top_left, self.bottom_right = find_screen(self.overlay, screen_color)
-        self.embed_scene_frame(list(self.scene.get_frames(0,1))[0]) #TODO: make method for this
+        self.overlay = self.embed_scene_frame(list(self.scene.get_frames(0,1))[0]) #TODO: make method for this
         super().__init__()
 
     def get_children(self):
@@ -391,13 +395,140 @@ class Overlay(Scene_object):
 
     def get_frames(self, start=0, stop=None):
         for frame in self.scene.get_frames(start, stop):
-            if self.is_static():
+            if self.scene.is_static():
                 yield self.overlay
             else:
                 yield self.embed_scene_frame(frame)
 
     def total_frames(self):
         return self.scene.total_frames()
+    
+class LinearTransform(Scene_object):
+    def __init__(self, scene, from_overlay, to_overlay, transition_time=1, 
+                 start_time=0 , from_end=False, blend=True, 
+                 screen_color = [0, 255, 0], 
+                 replace_color=default_options.background_color):   
+        self.scene = scene
+        self.output = "linear_transform.mp4"
+        self.transition_time = transition_time
+        self.start_time = start_time
+        self.from_end = from_end
+        self.blend = blend
+        
+        #read overlays
+        assert os.path.exists(from_overlay), f"File {from_overlay} does not exist."
+        assert os.path.exists(to_overlay), f"File {to_overlay} does not exist."
+        self.from_overlay = cv2.imread(from_overlay)
+        self.to_overlay =cv2.imread(to_overlay)
+
+        # make sure they are the same size
+        # TODO: resize higher to smaler to keep high quality
+        msg = f"Overlays in LinearTransition have different size: {self.from_overlay.shape} vs {self.to_overlay.shape}"
+        assert self.from_overlay.shape == self.to_overlay.shape, msg
+
+        # find screens in overlays
+        self.from_top_left, self.from_bottom_right = find_screen(self.from_overlay, screen_color)
+        self.to_top_left, self.to_bottom_right = find_screen(self.to_overlay, screen_color)
+
+        # replace green screen color with white color in from_overlay
+        self.from_overlay[
+            self.from_top_left[1]:self.from_bottom_right[1],
+            self.from_top_left[0]:self.from_bottom_right[0]] = replace_color
+        
+        # replace green screen color with white color in to_overlay
+        self.to_overlay[
+            self.to_top_left[1]:self.to_bottom_right[1],
+            self.to_top_left[0]:self.to_bottom_right[0]] = replace_color
+        
+        super().__init__()
+
+    def get_children(self):
+        return self.scene
+
+    def embed_scene_frame(self, frame, i):
+        # calculate coefficient of linear transform 
+        fps = default_options.fps
+        if self.from_end:
+            start_frame = self.total_frames() - fps*self.transition_time - fps*self.start_time
+        else:
+            start_frame = self.start_time*fps
+        c = max(0.0, min((i-start_frame)/(fps*self.transition_time), 1.0))
+        
+        # calculate new position of bottom right screen corner
+        bottom_right = (
+            int((1-c)*self.from_bottom_right[0] + c*self.to_bottom_right[0]), 
+            int((1-c)*self.from_bottom_right[1] + c*self.to_bottom_right[1])
+        )
+
+        # calculate new position of top left screen corner
+        top_left = (
+            int((1-c)*self.from_top_left[0] + c*self.to_top_left[0]), 
+            int((1-c)*self.from_top_left[1] + c*self.to_top_left[1])
+        )  
+        screen = (bottom_right[0] - top_left[0], bottom_right[1] - top_left[1])
+
+        # blend overlays during tranform
+        if self.blend:
+            overlay = cv2.addWeighted(self.from_overlay, (1-c), self.to_overlay, c, 0)
+        else:
+            overlay = self.to_overlay.copy()
+    
+        # put content to moving screen
+        frame = resize_to_fit_screen(frame, screen)
+        overlay[top_left[1]:bottom_right[1],top_left[0]:bottom_right[0]] = frame
+        return overlay
+
+    def get_frames(self, start=0, stop=None):
+        for i, frame in enumerate(self.scene.get_frames(start, stop), start):
+             yield self.embed_scene_frame(frame, i)
+
+    def total_frames(self):
+        return self.scene.total_frames()
+
+class LinearTransition(Scene_object):
+    def __init__(self, scene_in:Scene_object, scene_out:Scene_object, transition_time=1):   
+        self.scene_in = scene_in
+        self.scene_out = scene_out
+        self.transition_time = transition_time
+        self.output = "linear_transition.mp4"
+        super().__init__()
+
+    def get_children(self):
+        return self.scenes
+
+    def get_frames(self, start=0, stop=None):
+        fps = default_options.fps
+        if stop is None:
+            stop = self.total_frames() - 1
+        total_transition_frames =  int(fps*self.transition_time)
+        transition_start = self.scene_in.total_frames() - total_transition_frames
+        if start < transition_start:
+            start_in = start
+            stop_in = min(stop, transition_start)
+            for frame in self.scene_in.get_frames(start_in, stop_in):
+                yield frame
+        if stop > transition_start:
+            start_in = max(start, transition_start)
+            stop_in = min(stop, self.scene_in.total_frames()) 
+            start_out = max(0, start-transition_start)
+            stop_out = min(stop-transition_start, total_transition_frames)
+            gen_in = self.scene_in.get_frames(start_in, stop_in)
+            gen_out = self.scene_out.get_frames(start_out, stop_out)
+            i = max(0, start-transition_start)
+            for frame_in, frame_out in zip(gen_in, gen_out):
+                c = max(0.0, min(i/(fps*self.transition_time), 1.0))
+                i += 1
+                frame_in = resize_to_fit_screen(frame_in, self.size)
+                frame_out = resize_to_fit_screen(frame_out, self.size)
+                yield cv2.addWeighted(frame_in, (1-c), frame_out, c, 0)
+        if stop > self.scene_in.total_frames():
+            start_out = max(total_transition_frames, start-self.scene_in.total_frames())
+            stop_out = stop-self.scene_in.total_frames()
+            for frame in self.scene_out.get_frames(start_out, stop_out):
+                yield frame
+            
+    def total_frames(self):
+        return self.scene_in.total_frames() + self.scene_out.total_frames() - default_options.fps*self.transition_time
 
 class Scene_sequence(Scene_object):
     
@@ -429,9 +560,3 @@ class Scene_sequence(Scene_object):
 
     def total_frames(self):
         return self._total_frames
-
-    def shufle(self):
-        random.shuffle(self.scene_list)
-
-
-

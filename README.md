@@ -9,7 +9,7 @@ A simple tool to automaticaly create video sequences with simple edits<br>
 
 ## Instalation instruction using pip
 ```bash  
-python3 -m pip install git+https://github.com/LiborKudela/clipsticher.git
+pip instal clipstitcher
 ```  
 
 ## Quick documentation:

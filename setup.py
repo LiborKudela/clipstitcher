@@ -9,7 +9,7 @@ setup(
     name = 'clipstitcher',
     author = 'Libor Kudela',
     author_email = 'libor.kudela1@gmail.com',
-    version = '0.2.1',
+    version = '0.2.2',
     description = 'A python package for quick cutting video sequences',
     package_data={'': ['styles.css']},
     include_package_data=True,

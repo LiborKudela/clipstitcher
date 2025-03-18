@@ -8,7 +8,3 @@ from .scene_objects import (
 from .client_sync import (
     ClientPlayer,
     )
-
-from .host_sync import (
-    Uploader,
-    )

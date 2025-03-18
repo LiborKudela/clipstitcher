@@ -17,7 +17,6 @@ import hashlib
 import json
 import threading
 import subprocess as sp
-from .host_sync import Uploader
 import paramiko
 
 class DefaultOptions:

@@ -6,6 +6,8 @@ import requests
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.common.keys import Keys
 import time
 import random
 import numpy as np
@@ -16,6 +18,7 @@ import json
 import threading
 import subprocess as sp
 from .host_sync import Uploader
+import paramiko
 
 class DefaultOptions:
     def __init__(self):
@@ -183,54 +186,62 @@ class Scene_object:
                 break
         cv2.destroyAllWindows()
 
-    def get_hash_id(self):
-        m = hashlib.sha256()
-        d_str = json.dumps(self.__dict__)
-        m.update(d_str.encode('UTF-8'))
-        return m.hexdigest()
+    # def get_hash_id(self):
+    #     m = hashlib.sha256()
+    #     d_str = json.dumps(self.__dict__)
+    #     m.update(d_str.encode('UTF-8'))
+    #     return m.hexdigest()
     
-    def get_file_hash(self):
-        """"This function returns the SHA-1 hash
-        of the file passed into it"""
+    # def get_file_hash(self):
+    #     """"This function returns the SHA-1 hash
+    #     of the file passed into it"""
 
-        # make a hash object
-        h = hashlib.sha1()
+    #     # make a hash object
+    #     h = hashlib.sha1()
 
-        # open file for reading in binary mode
-        with open(self.output, 'rb') as file:
+    #     # open file for reading in binary mode
+    #     with open(self.output, 'rb') as file:
 
-            # loop till the end of the file
-            chunk = 0
-            while chunk != b'':
-                # read only 1024 bytes at a time
-                chunk = file.read(1024)
-                h.update(chunk)
+    #         # loop till the end of the file
+    #         chunk = 0
+    #         while chunk != b'':
+    #             # read only 1024 bytes at a time
+    #             chunk = file.read(1024)
+    #             h.update(chunk)
 
-        # return the hex representation of digest
-        return h.hexdigest()
-    
-    def update_broadcast(self, folder_id):
+    #     # return the hex representation of digest
+    #     return h.hexdigest()
 
-        # create instance of uploader
-        if not hasattr(self, 'uploader'):
-            self.uploader = Uploader(default_options.client_secrets)
-
-        # upload video and get metadata for controller
-        file_id = self.uploader.upload_file(self.output, folder_id)
-        file_name = os.path.split(self.output)[1]
-        file_hash = self.get_file_hash()
-       
-
-        # update controller
-        with open('controller.txt', 'w') as cf:
-            ctrl = f'{file_name};{file_id};{file_hash}'
-            cf.write(ctrl)
-        self.uploader.upload_file('controller.txt', folder_id)
-
-    def upload_linux_rsync(self, user=None, ip=None, folder=None):
+    def update_broadcast_paramiko(self, user=None, ip=None, folder=None, ssh_key_file=None):
         # not tested
-        assert(user is not None and ip is not None and folder is not None)
-        os.system(f'rsync  -v --progress {self.output} {user}@{ip}:{folder}/{self.output}')
+        assert(user is not None and ip is not None and ssh_key_file is not None)
+        if folder is None:
+            folder = f'/home/{user}/Videos/clipstitcher'
+        key = paramiko.RSAKey(filename=ssh_key_file)
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        # connect via ssh
+        ssh.connect(ip, username=user, pkey=key)
+
+        # stop current VLC instance
+        print("Stopping current VLC instance")
+        ssh.exec_command(f'pkill vlc')
+        ssh.exec_command(f'sleep 1')
+
+        # upload video
+        media_file = f'{folder}/{self.output}'
+        print(f"Uploading video to {media_file}")
+        sftp = ssh.open_sftp()
+        sftp.put(self.output, media_file)
+        sftp.close()
+        print(f"Video uploaded!")
+
+        # start video
+        print("Starting new VLC instance")
+        ssh.exec_command(f'bash -l -c "DISPLAY=:0 vlc {media_file} --loop --fullscreen --no-video-title-show &"')
+        ssh.close()
+        print("VLC should be running now!!")
 
 
 class Image(Scene_object):
@@ -258,9 +269,9 @@ class Image(Scene_object):
         return self.duration*default_options.fps
 
 class Html_page(Scene_object):
-    def __init__(self, html_str=None, html_url=None, html_file=None, duration=5,
-                 actions=[]):
+    def __init__(self, html_str=None, html_url=None, html_file=None, duration=5, scripts=[]):
         self.duration = duration
+        self.scripts = scripts
         if html_url is not None:
             self.img = self.url_to_image(html_url)
         if html_file is not None:
@@ -283,6 +294,11 @@ class Html_page(Scene_object):
         driver = webdriver.Chrome(options=options)
         driver.get(url)
         time.sleep(2)
+
+        for s in self.scripts:
+            driver.execute_script(s)
+        time.sleep(1)
+
         driver.get_screenshot_as_file("screenshot.png")
         driver.quit()
         img = cv2.imread("screenshot.png")
@@ -313,9 +329,27 @@ class Tweet(Html_page):
 
     def __init__(self, tweet_url, duration=5):
         self.tweet_url = tweet_url
+        print(f"Requesting tweet {tweet_url}")
         res = requests.get(f"https://publish.twitter.com/oembed?url={tweet_url}")
         html_str = self.embed_to_html(res.json()["html"])
-        super().__init__(html_str=html_str, duration=duration)
+        js_script = f"""
+            var element = document.querySelector('.twitter-tweet');
+            original_height = element.offsetHeight;
+            screen_height = window.innerHeight;
+            var zoom_in = screen_height / original_height;
+            console.log(zoom_in);
+            document.body.style.zoom = String(zoom_in);
+            if (element) {{
+                element.scrollIntoView({{
+                    behavior: 'auto',
+                    block: 'center',
+                    inline: 'center'
+                }});
+            }}
+            return new Promise(resolve => setTimeout(resolve, 1000));
+        """
+        print(f"Converting tweet {tweet_url} to image")
+        super().__init__(html_str=html_str, duration=duration, scripts=[js_script])
         self.output = "tweet.mp4"
 
     def embed_to_html(self, embed_code):

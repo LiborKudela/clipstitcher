@@ -28,6 +28,7 @@ class DefaultOptions:
         self.ffmpeg_win = '.\\ffmpeg_tool\\bin\\ffmpeg.exe'
         self.client_secrets = 'client_secrets.json'
         self.fps = 24
+        self.cache_dir = "clipstitcher_cache"
 
 default_options = DefaultOptions()  
 
@@ -88,6 +89,12 @@ def ffmpeg_concatenate(files, out="merge.mp4"):
     # remove input file
     os.remove(i)
 
+
+def clear_cache(period=7*24*60*60):
+    # remove all files that are untouched for more than 7 days
+    for file in os.listdir(default_options.cache_dir):
+        if os.path.getmtime(os.path.join(default_options.cache_dir, file)) < time.time() - period:
+            os.remove(os.path.join(default_options.cache_dir, file))
        
 class Scene_object:
     def __init__(self, screen=default_options.resolution, fill_color=[255, 255, 255]):
@@ -97,6 +104,7 @@ class Scene_object:
         self.static = False
         self.threadLock = threading.Lock()
         self.temp_output = "chunk_{}.mp4"
+        self.hash_id = None
 
     def get_children(self):
         return None
@@ -135,19 +143,23 @@ class Scene_object:
         
         # resolve chunks and their size
         if stop is None:
-            stop = self.total_frames() - 1
+            stop = self.total_frames()
         total_frames = stop - start
         chunk_size = int((stop-start)/threads)
+        print(f"Chunk size: {chunk_size*threads} vs {self.total_frames()}")
 
         # generate and start render threads
         self.frames_processed = 0
         render_threads = []
         chunk_files = [self.temp_output.format(i) for i in range(threads)]
+        kwargs_list = []
         for i in range(threads):
-            kwargs = {
+            kwargs_list.append({
                 "start": start + chunk_size*i, 
                 "stop": min(start + chunk_size*(i+1), total_frames), 
-                "output": chunk_files[i]}
+                "output": chunk_files[i]})
+        kwargs_list[-1]["stop"] = total_frames
+        for kwargs in kwargs_list:
             t = threading.Thread(target=self.render_serial, kwargs=kwargs)
             render_threads.append(t)
             t.start()
@@ -184,32 +196,6 @@ class Scene_object:
             if pressed_key == ord('q'):  # quit all play/render
                 break
         cv2.destroyAllWindows()
-
-    # def get_hash_id(self):
-    #     m = hashlib.sha256()
-    #     d_str = json.dumps(self.__dict__)
-    #     m.update(d_str.encode('UTF-8'))
-    #     return m.hexdigest()
-    
-    # def get_file_hash(self):
-    #     """"This function returns the SHA-1 hash
-    #     of the file passed into it"""
-
-    #     # make a hash object
-    #     h = hashlib.sha1()
-
-    #     # open file for reading in binary mode
-    #     with open(self.output, 'rb') as file:
-
-    #         # loop till the end of the file
-    #         chunk = 0
-    #         while chunk != b'':
-    #             # read only 1024 bytes at a time
-    #             chunk = file.read(1024)
-    #             h.update(chunk)
-
-    #     # return the hex representation of digest
-    #     return h.hexdigest()
 
     def update_broadcast_paramiko(self, user=None, ip=None, folder=None, ssh_key_file=None):
         # not tested
@@ -254,6 +240,8 @@ class Image(Scene_object):
         self.img = cv2.cvtColor(self.img, cv2.COLOR_BGRA2BGR)
         super().__init__()
         self.static = True
+        with open(filepath, 'rb') as f:
+            self.hash_id = hashlib.sha256(f.read()).hexdigest()
 
     def get_children(self):
         return self.img
@@ -272,19 +260,42 @@ class Html_page(Scene_object):
         self.duration = duration
         self.scripts = scripts
         if html_url is not None:
+            content = requests.get(html_url).content
             self.img = self.url_to_image(html_url)
-        if html_file is not None:
+            m = hashlib.sha256()
+            m.update(content)
+            for s in self.scripts:
+                m.update(s.encode('UTF-8'))
+            hash_id = m.hexdigest()
+        elif html_file is not None:
             self.img = self.file_to_image(html_file)
+            with open(html_file, 'rb') as f:
+                m = hashlib.sha256()
+                m.update(f.read())
+                for s in self.scripts:
+                    m.update(s.encode('UTF-8'))
+                hash_id = m.hexdigest()
         elif html_str is not None:
             self.img = self.html_str_to_image(html_str)
+            m = hashlib.sha256()
+            m.update(html_str.encode('UTF-8'))
+            for s in self.scripts:
+                m.update(s.encode('UTF-8'))
+            hash_id = m.hexdigest()
         self.output = "html_page.mp4"
         super().__init__()
         self.static = True
+        self.hash_id = hash_id
 
     def get_children(self):
         return self.img
 
     def url_to_image(self, url):
+        url_hash = hashlib.sha256(url.encode('UTF-8')).hexdigest()
+        cache_file = os.path.join(default_options.cache_dir, f"{url_hash}.png")
+        if os.path.exists(cache_file):
+            return cv2.imread(cache_file)
+        
         options = Options()
         options.add_argument("--headless")
         options.add_argument("--window-size={},{}".format(*default_options.resolution))
@@ -301,6 +312,7 @@ class Html_page(Scene_object):
         driver.get_screenshot_as_file("screenshot.png")
         driver.quit()
         img = cv2.imread("screenshot.png")
+        cv2.imwrite(cache_file, img)
         return img
 
     def file_to_image(self, file):
@@ -350,6 +362,10 @@ class Tweet(Html_page):
         print(f"Converting tweet {tweet_url} to image")
         super().__init__(html_str=html_str, duration=duration, scripts=[js_script])
         self.output = "tweet.mp4"
+        m = hashlib.sha256()
+        m.update(html_str.encode('UTF-8'))
+        m.update(js_script.encode('UTF-8'))
+        self.hash_id = m.hexdigest()
 
     def embed_to_html(self, embed_code):
         code = f"""
@@ -364,15 +380,6 @@ class Tweet(Html_page):
                 </html>"""
         return textwrap.dedent(code)
 
-def load_tweets_from_file(path, duration=5):
-    tweets = []
-    with open(path, 'r') as f:
-        lines = f.readlines()
-    for line in lines:
-        if (line[0:15] == "https://twitter"):
-            tweets.append(Tweet(line, duration))
-    return tweets
-
 class Video(Scene_object):
 
     def __init__(self, file):
@@ -382,6 +389,8 @@ class Video(Scene_object):
         self.n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         cap.release()
         super().__init__()
+        with open(self.file, 'rb') as f:
+            self.hash_id = hashlib.sha256(f.read()).hexdigest()
 
     def get_children(self):
         return self.file
@@ -390,7 +399,7 @@ class Video(Scene_object):
         cap = cv2.VideoCapture(self.file)
         cap.set(1, start)
         if stop is None:
-            stop = self.total_frames() - 1
+            stop = self.total_frames()
         for i in range(start, stop):
             ret, frame = cap.read()
             yield frame
@@ -415,6 +424,10 @@ class Overlay(Scene_object):
         self.top_left, self.bottom_right = find_screen(self.overlay, screen_color)
         self.overlay = self.embed_scene_frame(list(self.scene.get_frames(0,1))[0]) #TODO: make method for this
         super().__init__()
+        m = hashlib.sha256()
+        m.update(self.overlay.tobytes())
+        m.update(self.scene.hash_id.encode('UTF-8'))
+        self.hash_id = m.hexdigest()
 
     def get_children(self):
         return self.scene
@@ -437,7 +450,7 @@ class Overlay(Scene_object):
         return self.scene.total_frames()
     
 class LinearTransform(Scene_object):
-    def __init__(self, scene, from_overlay, to_overlay, transition_time=1, 
+    def __init__(self, scene: Scene_object, from_overlay, to_overlay, transition_time=1, 
                  start_time=0 , from_end=False, blend=True, 
                  screen_color = [0, 255, 0], 
                  replace_color=default_options.background_color):   
@@ -474,6 +487,11 @@ class LinearTransform(Scene_object):
             self.to_top_left[0]:self.to_bottom_right[0]] = replace_color
         
         super().__init__()
+        m = hashlib.sha256() 
+        m.update(self.scene.hash_id.encode('UTF-8'))
+        m.update(self.from_overlay.tobytes())
+        m.update(self.to_overlay.tobytes())
+        self.hash_id = m.hexdigest()
 
     def get_children(self):
         return self.scene
@@ -525,6 +543,10 @@ class LinearTransition(Scene_object):
         self.transition_time = transition_time
         self.output = "linear_transition.mp4"
         super().__init__()
+        m = hashlib.sha256() 
+        m.update(self.scene_in.hash_id.encode('UTF-8'))
+        m.update(self.scene_out.hash_id.encode('UTF-8'))
+        self.hash_id = m.hexdigest()
 
     def get_children(self):
         return self.scenes
@@ -535,32 +557,53 @@ class LinearTransition(Scene_object):
             stop = self.total_frames() - 1
         total_transition_frames =  int(fps*self.transition_time)
         transition_start = self.scene_in.total_frames() - total_transition_frames
-        if start < transition_start:
-            start_in = start
-            stop_in = min(stop, transition_start)
-            for frame in self.scene_in.get_frames(start_in, stop_in):
-                frame = resize_to_fit_screen(frame, self.size)
-                yield frame
-        if stop > transition_start:
-            start_in = max(start, transition_start)
-            stop_in = min(stop, self.scene_in.total_frames()) 
-            start_out = max(0, start-transition_start)
-            stop_out = min(stop-transition_start, total_transition_frames)
-            gen_in = self.scene_in.get_frames(start_in, stop_in)
-            gen_out = self.scene_out.get_frames(start_out, stop_out)
-            i = max(0, start-transition_start)
-            for frame_in, frame_out in zip(gen_in, gen_out):
-                c = max(0.0, min(i/(fps*self.transition_time), 1.0))
-                i += 1
-                frame_in = resize_to_fit_screen(frame_in, self.size)
-                frame_out = resize_to_fit_screen(frame_out, self.size)
+        transition_stop = self.scene_in.total_frames()
+
+
+        for i in range(start, stop):
+            if i < transition_start:
+                frame = self.scene_in.get_frames(i, i+1).__next__()
+                yield resize_to_fit_screen(frame, self.size)
+            elif i >= transition_start and i < transition_stop:
+                c = max(0.0, min((i-transition_start)/(fps*self.transition_time), 1.0))
+                frame_in = resize_to_fit_screen(self.scene_in.get_frames(i, i+1).__next__(), self.size)
+                frame_out = resize_to_fit_screen(self.scene_out.get_frames(i, i+1).__next__(), self.size)
                 yield cv2.addWeighted(frame_in, (1-c), frame_out, c, 0)
-        if stop > self.scene_in.total_frames():
-            start_out = max(total_transition_frames, start-self.scene_in.total_frames())
-            stop_out = stop-self.scene_in.total_frames()
-            for frame in self.scene_out.get_frames(start_out, stop_out):
-                frame = resize_to_fit_screen(frame, self.size)
-                yield frame
+            else:
+                frame = self.scene_out.get_frames(i, i+1).__next__()
+                yield resize_to_fit_screen(frame, self.size)
+
+        counter = 0
+        # if start < transition_start:
+        #     start_in = start
+        #     stop_in = min(stop, transition_start)
+        #     for frame in self.scene_in.get_frames(start_in, stop_in):
+        #         frame = resize_to_fit_screen(frame, self.size)
+        #         yield frame
+        # if stop > transition_start and start < transition_stop:
+        #     start_in = max(start, transition_start)
+        #     stop_in = min(stop, self.scene_in.total_frames()) 
+        #     start_out = max(0, start-transition_start)
+        #     stop_out = min(stop-transition_start, total_transition_frames)
+        #     gen_in = self.scene_in.get_frames(start_in, stop_in)
+        #     gen_out = self.scene_out.get_frames(start_out, stop_out)
+        #     i = max(0, start-transition_start)
+        #     for frame_in, frame_out in zip(gen_in, gen_out):
+        #         c = max(0.0, min(i/(fps*self.transition_time), 1.0))
+        #         i += 1
+        #         frame_in = resize_to_fit_screen(frame_in, self.size)
+        #         frame_out = resize_to_fit_screen(frame_out, self.size)
+        #         counter += 1
+        #         print(f"LinearTransition transition: {counter}")
+        #         yield cv2.addWeighted(frame_in, (1-c), frame_out, c, 0)
+        # if stop > transition_stop:
+        #     start_out = max(total_transition_frames, start-self.scene_in.total_frames())
+        #     stop_out = min(stop, self.scene_out.total_frames())
+        #     for frame in self.scene_out.get_frames(start_out, stop_out):
+        #         frame = resize_to_fit_screen(frame, self.size)
+        #         counter += 1
+        #         print(f"LinearTransition out: {counter}")
+        #         yield frame
             
     def total_frames(self):
         return self.scene_in.total_frames() + self.scene_out.total_frames() - default_options.fps*self.transition_time
@@ -575,6 +618,10 @@ class Scene_sequence(Scene_object):
         self.scene_stop_idx = np.cumsum(self.frames_in_scene) - 1
         self.output = "sequence.mp4"
         super().__init__()
+        m = hashlib.sha256() 
+        for scene in self.scene_list:
+            m.update(scene.hash_id.encode('UTF-8'))
+        self.hash_id = m.hexdigest()
 
     def get_children(self):
         return self.scene_list
@@ -587,8 +634,39 @@ class Scene_sequence(Scene_object):
         for scene_idx in range(first_scene_idx, last_scene_idx+1):
             scene_start = min(self.frames_in_scene[scene_idx]-1, max(0, start - self.scene_start_idx[scene_idx]))
             scene_stop = min(self.frames_in_scene[scene_idx], max(0, stop - self.scene_start_idx[scene_idx]))
+            print(f"{self.scene_list[scene_idx].__class__.__name__} - {scene_idx} - {scene_start}, {scene_stop}")
             for frame in self.scene_list[scene_idx].get_frames(scene_start, scene_stop):
                 yield frame
+
+    def render_flattened(self, threads=1, output="sequence.mp4", return_files=False):
+        total_frames = self.total_frames()
+        cache_dir = default_options.cache_dir
+        if not os.path.exists(cache_dir):
+            os.makedirs(cache_dir)
+
+        files_to_concatenate = []
+        for scene in self.scene_list:
+            hash_id = scene.hash_id
+            scene_chunk_path = os.path.join(cache_dir, hash_id) + ".mp4"
+            if os.path.exists(scene_chunk_path):
+                files_to_concatenate.append(scene_chunk_path)
+                print(f"{scene.__class__.__name__} - Cached scene {hash_id}")
+                continue
+            print(f"{scene.__class__.__name__} - Rendering scene {hash_id}")
+            if isinstance(scene, Scene_sequence):
+                l = scene.render_flattened(threads=threads, output=scene_chunk_path, return_files=True)
+                files_to_concatenate.extend(l)
+            else:
+                scene.render(threads=threads, output=scene_chunk_path)
+                files_to_concatenate.append(scene_chunk_path)
+
+            print(f"Total progress: {len(files_to_concatenate)/total_frames}")
+        ffmpeg_concatenate(files_to_concatenate, out=output)
+        if return_files:
+            return files_to_concatenate
+        else:
+            return output
+
 
     def render_scene(self, i):
         self.scene_list[i].render(output=f"scene_{i}_{self.scene_list[i].output}")

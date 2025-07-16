@@ -3,3 +3,6 @@ screenshot.png
 temp_web_page.html
 build/*
 clipstitcher.egg-info/*
+clipstitcher_cache*
+sequence.mp4
+oei_TV_paramiko_sshkey.pem

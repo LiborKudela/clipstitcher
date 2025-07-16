@@ -79,7 +79,8 @@ def ffmpeg_concatenate(files, out="merge.mp4"):
     i = "concat_files.txt"
     with open("concat_files.txt", "w") as txtf:
         for f in files:
-            txtf.write("file {} \n".format(f))
+            f = f.replace('\\', '/')
+            txtf.write(f"file {f} \n")
     
     # run ffmpeg
     if os.name =='posix':
@@ -654,7 +655,6 @@ class Scene_sequence(Scene_object):
                 yield frame
 
     def render_flattened(self, threads=1, output="sequence.mp4", return_files=False):
-        total_frames = self.total_frames()
         cache_dir = default_options.cache_dir
         if not os.path.exists(cache_dir):
             os.makedirs(cache_dir)
@@ -675,13 +675,11 @@ class Scene_sequence(Scene_object):
                 scene.render(threads=threads, output=scene_chunk_path)
                 files_to_concatenate.append(scene_chunk_path)
 
-            print(f"Total progress: {len(files_to_concatenate)/total_frames}")
         ffmpeg_concatenate(files_to_concatenate, out=output)
         if return_files:
             return files_to_concatenate
         else:
             return output
-
 
     def render_scene(self, i):
         self.scene_list[i].render(output=f"scene_{i}_{self.scene_list[i].output}")

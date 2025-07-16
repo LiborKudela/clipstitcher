@@ -29,6 +29,9 @@ class DefaultOptions:
         self.client_secrets = 'client_secrets.json'
         self.fps = 24
         self.cache_dir = "clipstitcher_cache"
+        # make cache dir if it doesn't exist
+        if not os.path.exists(self.cache_dir):
+            os.makedirs(self.cache_dir)
 
 default_options = DefaultOptions()  
 
@@ -240,8 +243,12 @@ class Image(Scene_object):
         self.img = cv2.cvtColor(self.img, cv2.COLOR_BGRA2BGR)
         super().__init__()
         self.static = True
+        m = hashlib.sha256()
         with open(filepath, 'rb') as f:
-            self.hash_id = hashlib.sha256(f.read()).hexdigest()
+            m.update(f.read())
+        m.update(str(duration).encode('UTF-8'))
+        m.update(str(background_color).encode('UTF-8'))
+        self.hash_id = m.hexdigest()
 
     def get_children(self):
         return self.img
@@ -266,7 +273,6 @@ class Html_page(Scene_object):
             m.update(content)
             for s in self.scripts:
                 m.update(s.encode('UTF-8'))
-            hash_id = m.hexdigest()
         elif html_file is not None:
             self.img = self.file_to_image(html_file)
             with open(html_file, 'rb') as f:
@@ -274,14 +280,14 @@ class Html_page(Scene_object):
                 m.update(f.read())
                 for s in self.scripts:
                     m.update(s.encode('UTF-8'))
-                hash_id = m.hexdigest()
         elif html_str is not None:
             self.img = self.html_str_to_image(html_str)
             m = hashlib.sha256()
             m.update(html_str.encode('UTF-8'))
             for s in self.scripts:
                 m.update(s.encode('UTF-8'))
-            hash_id = m.hexdigest()
+        m.update(str(duration).encode('UTF-8'))
+        hash_id = m.hexdigest()
         self.output = "html_page.mp4"
         super().__init__()
         self.static = True
@@ -365,6 +371,7 @@ class Tweet(Html_page):
         m = hashlib.sha256()
         m.update(html_str.encode('UTF-8'))
         m.update(js_script.encode('UTF-8'))
+        m.update(str(duration).encode('UTF-8'))
         self.hash_id = m.hexdigest()
 
     def embed_to_html(self, embed_code):
@@ -427,6 +434,7 @@ class Overlay(Scene_object):
         m = hashlib.sha256()
         m.update(self.overlay.tobytes())
         m.update(self.scene.hash_id.encode('UTF-8'))
+        m.update(str(screen_color).encode('UTF-8'))
         self.hash_id = m.hexdigest()
 
     def get_children(self):
@@ -491,6 +499,12 @@ class LinearTransform(Scene_object):
         m.update(self.scene.hash_id.encode('UTF-8'))
         m.update(self.from_overlay.tobytes())
         m.update(self.to_overlay.tobytes())
+        m.update(str(self.transition_time).encode('UTF-8'))
+        m.update(str(self.start_time).encode('UTF-8'))
+        m.update(str(self.from_end).encode('UTF-8'))
+        m.update(str(self.blend).encode('UTF-8'))
+        m.update(str(screen_color).encode('UTF-8'))
+        m.update(str(replace_color).encode('UTF-8'))
         self.hash_id = m.hexdigest()
 
     def get_children(self):
@@ -546,6 +560,7 @@ class LinearTransition(Scene_object):
         m = hashlib.sha256() 
         m.update(self.scene_in.hash_id.encode('UTF-8'))
         m.update(self.scene_out.hash_id.encode('UTF-8'))
+        m.update(str(self.transition_time).encode('UTF-8'))
         self.hash_id = m.hexdigest()
 
     def get_children(self):

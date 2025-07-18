@@ -458,6 +458,53 @@ class Overlay(Scene_object):
     def total_frames(self):
         return self.scene.total_frames()
     
+
+class WaterMark(Scene_object):
+    def __init__(self, scene: Scene_object, watermark_file: str, ease_in=None, ease_out=None):
+        self.scene = scene
+        self.watermark_file = watermark_file
+        self.watermark_original = cv2.imread(watermark_file, cv2.IMREAD_UNCHANGED)
+        super().__init__()
+        m = hashlib.sha256()
+        m.update(self.watermark_original.tobytes())
+        m.update(self.scene.hash_id.encode('UTF-8'))
+        m.update(str(ease_in).encode('UTF-8'))
+        m.update(str(ease_out).encode('UTF-8'))
+        self.hash_id = m.hexdigest()
+
+    def total_frames(self):
+        return self.scene.total_frames()
+
+    def get_children(self):
+        return self.scene
+
+    def get_frames(self, start=0, stop=None):
+        if stop is None:
+            stop = self.scene.total_frames() - 1
+        for i, frame in enumerate(self.scene.get_frames(start, stop)):
+            # overlay each frame with the transparent watermark
+            watermark = resize_to_fit_screen(self.watermark_original, (frame.shape[1], frame.shape[0])).astype(np.float32)
+            
+            # Extract alpha channel and normalize to 0-1 range
+            alpha = watermark[:,:,3] / 255.0
+            alpha_inv = 1.0 - alpha
+            
+            # Use broadcasting - alpha will automatically broadcast to (H, W, 3)
+            # No need to create alpha_3d explicitly
+            
+            # Perform alpha blending: result = alpha * foreground + (1-alpha) * background
+            watermark_part = watermark[:,:,:3]
+            watermark_part[:,:,0] *= alpha
+            watermark_part[:,:,1] *= alpha
+            watermark_part[:,:,2] *= alpha
+            frame_part = frame.astype(np.float32)
+            frame_part[:,:,0] *= alpha_inv
+            frame_part[:,:,1] *= alpha_inv
+            frame_part[:,:,2] *= alpha_inv
+            combined = watermark_part + frame_part
+            
+            yield combined.astype(np.uint8)
+    
 class LinearTransform(Scene_object):
     def __init__(self, scene: Scene_object, from_overlay, to_overlay, transition_time=1, 
                  start_time=0 , from_end=False, blend=True, 
@@ -588,38 +635,6 @@ class LinearTransition(Scene_object):
             else:
                 frame = self.scene_out.get_frames(i, i+1).__next__()
                 yield resize_to_fit_screen(frame, self.size)
-
-        counter = 0
-        # if start < transition_start:
-        #     start_in = start
-        #     stop_in = min(stop, transition_start)
-        #     for frame in self.scene_in.get_frames(start_in, stop_in):
-        #         frame = resize_to_fit_screen(frame, self.size)
-        #         yield frame
-        # if stop > transition_start and start < transition_stop:
-        #     start_in = max(start, transition_start)
-        #     stop_in = min(stop, self.scene_in.total_frames()) 
-        #     start_out = max(0, start-transition_start)
-        #     stop_out = min(stop-transition_start, total_transition_frames)
-        #     gen_in = self.scene_in.get_frames(start_in, stop_in)
-        #     gen_out = self.scene_out.get_frames(start_out, stop_out)
-        #     i = max(0, start-transition_start)
-        #     for frame_in, frame_out in zip(gen_in, gen_out):
-        #         c = max(0.0, min(i/(fps*self.transition_time), 1.0))
-        #         i += 1
-        #         frame_in = resize_to_fit_screen(frame_in, self.size)
-        #         frame_out = resize_to_fit_screen(frame_out, self.size)
-        #         counter += 1
-        #         print(f"LinearTransition transition: {counter}")
-        #         yield cv2.addWeighted(frame_in, (1-c), frame_out, c, 0)
-        # if stop > transition_stop:
-        #     start_out = max(total_transition_frames, start-self.scene_in.total_frames())
-        #     stop_out = min(stop, self.scene_out.total_frames())
-        #     for frame in self.scene_out.get_frames(start_out, stop_out):
-        #         frame = resize_to_fit_screen(frame, self.size)
-        #         counter += 1
-        #         print(f"LinearTransition out: {counter}")
-        #         yield frame
             
     def total_frames(self):
         return self.scene_in.total_frames() + self.scene_out.total_frames() - default_options.fps*self.transition_time
